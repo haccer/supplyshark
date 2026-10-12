@@ -1,4 +1,5 @@
 from colorama import Fore
+from . import surfaces
 import json
 
 def get_branch(repo_name, repos):
@@ -6,6 +7,9 @@ def get_branch(repo_name, repos):
         if repo['repo_name'] == repo_name:
             return repo['default_branch']
     return None
+
+def _label(base, tag):
+    return f"{base}:{tag}" if tag else base
 
 def _write_result(label, item, repo_urls, bug_urls, output_file):
     msg = f"[{label}] {item} {list(set(repo_urls))} {list(set(bug_urls))}"
@@ -34,7 +38,8 @@ def npm_results(npm_data, repos, output_file="results.txt"):
                 bug_urls.append(bug_url)
                 repo_urls.append(repo_url)
 
-            _write_result("npm", package, repo_urls, bug_urls, output_file)
+            ref_files = [package_result[i][0]["file"] for i in range(1, len(package_result))]
+            _write_result(_label("npm", surfaces.package_surface(ref_files)), package, repo_urls, bug_urls, output_file)
             count += 1
         except:
             pass
@@ -42,6 +47,12 @@ def npm_results(npm_data, repos, output_file="results.txt"):
     for scope_result in npm_scope_results:
         try:
             scope = scope_result[0]["scope"]
+            packages = scope_result[0].get("packages") or []
+            item = scope
+            if packages:
+                item += f" (packages: {', '.join(packages)})"
+            if scope_result[0].get("unverified"):
+                item += " [scope ownership unverified]"
             bug_urls = []
             repo_urls = []
             for i in range(1, len(scope_result)):
@@ -55,7 +66,7 @@ def npm_results(npm_data, repos, output_file="results.txt"):
                 bug_urls.append(bug_url)
                 repo_urls.append(repo_url)
 
-            _write_result("npm scope", scope, repo_urls, bug_urls, output_file)
+            _write_result("npm scope", item, list(set(repo_urls))[:10], bug_urls, output_file)
             count += 1
         except:
             pass
@@ -82,7 +93,8 @@ def gem_results(gem_data, repos, output_file="results.txt"):
                 bug_urls.append(bug_url)
                 repo_urls.append(repo_url)
 
-            _write_result("gem", package, repo_urls, bug_urls, output_file)
+            ref_files = [package_result[i][0]["file"] for i in range(1, len(package_result))]
+            _write_result(_label("gem", surfaces.package_surface(ref_files)), package, repo_urls, bug_urls, output_file)
             count += 1
         except:
             pass
@@ -109,19 +121,82 @@ def pip_results(pip_data, repos, output_file="results.txt"):
                 bug_urls.append(bug_url)
                 repo_urls.append(repo_url)
 
-            _write_result("pip", package, repo_urls, bug_urls, output_file)
+            ref_files = [package_result[i][0]["file"] for i in range(1, len(package_result))]
+            _write_result(_label("pip", surfaces.package_surface(ref_files)), package, repo_urls, bug_urls, output_file)
             count += 1
         except:
             pass
     
     return count
 
+def mcp_url_results(items, repos, output_file="results.txt"):
+    """Remote MCP server endpoints from agent configs: plaintext HTTP or
+    domains that no longer resolve (re-registration = agent connection
+    takeover)."""
+    count = 0
+    for item in items:
+        try:
+            url = item[0]["url"]
+            reason = item[0]["reason"]
+            repo_urls = []
+            bug_urls = []
+            for i in range(1, len(item)):
+                file = item[i][0]["file"]
+                line_number = item[i][0]["line_number"]
+                repo = "/".join(file.split("/")[:2])
+                branch = get_branch(repo.split("/")[1], repos)
+                repo_url = f"https://github.com/{repo}"
+                file_path = "/".join(file.split("/")[2:])
+                bug_urls.append(f"{repo_url}/blob/{branch}/{file_path}?plain=1#L{line_number}")
+                repo_urls.append(repo_url)
+
+            # cap ref lists: endpoints/domains can be referenced hundreds of times
+            shown = list(set(bug_urls))
+            _write_result("mcp-url", f"{reason} {url} ({len(shown)} refs)", list(set(repo_urls)), shown[:10], output_file)
+            count += 1
+        except:
+            pass
+
+    return count
+
+def url_results(items, repos, output_file="results.txt"):
+    """Dead or internal-only domains referenced by the scanned repos.
+    Domains have no reservation system: an expired one is claimable, and
+    re-registration captures every URL still pointing at it."""
+    count = 0
+    for item in items:
+        try:
+            host = item[0]["host"]
+            reason = item[0]["reason"]
+            repo_urls = []
+            bug_urls = []
+            for i in range(1, len(item)):
+                file = item[i][0]["file"]
+                line_number = item[i][0]["line_number"]
+                repo = "/".join(file.split("/")[:2])
+                branch = get_branch(repo.split("/")[1], repos)
+                repo_url = f"https://github.com/{repo}"
+                file_path = "/".join(file.split("/")[2:])
+                bug_urls.append(f"{repo_url}/blob/{branch}/{file_path}?plain=1#L{line_number}")
+                repo_urls.append(repo_url)
+
+            # cap ref lists: dead domains can be referenced hundreds of times
+            shown = list(set(bug_urls))
+            _write_result("domain", f"{reason} {host} ({len(shown)} refs)", list(set(repo_urls)), shown[:10], output_file)
+            count += 1
+        except:
+            pass
+
+    return count
+
 def process_results(results, repos, output_file="results.txt"):
     data = json.loads(results)
-    
-    counts = [
-        npm_results(data[0]['npm_results'], repos, output_file),
-        gem_results(data[1]['gem_results'], repos, output_file)
-    ]
 
+    counts = [
+        npm_results(data['npm_results'], repos, output_file),
+        gem_results(data['gem_results'], repos, output_file),
+        pip_results(data['pip_results'], repos, output_file),
+        mcp_url_results(data.get('mcp_url_results', []), repos, output_file),
+        url_results(data.get('url_results', []), repos, output_file),
+    ]
     return sum(counts)

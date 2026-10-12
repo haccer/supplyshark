@@ -6,12 +6,20 @@ def check(result):
     else:
         return True
 
+# npx/bunx/uvx/dlx take the package as their first argument and may be
+# followed by extra arguments, so the single-token rule does not apply
+RUNNERS = {'npx', 'bunx', 'uvx', 'dlx'}
+
 def search(lines):
     matches = []
-    pattern = re.compile(r'(install|add|ci|i)(?: -(?:g|D|U)| --(?:save|dev|global|upgrade))? (.*)')
+    pattern = re.compile(r'(install|add|ci|i|npx|bunx|uvx|dlx)(?: -(?:y|g|D|E|U|s|q)| --(?:save-dev|save-optional|save-exact|save-prod|save|dev|global|upgrade|yes|silent|quiet))? (.+)')
     for line in lines:
         match = pattern.search(line)
-        if match and check(match.group(2)):
+        if not match:
+            continue
+        if match.group(1) in RUNNERS:
+            matches += [package(match.group(2).split()[0])]
+        elif check(match.group(2)):
             matches += [package(match.group(2))]
     return matches
 
@@ -41,10 +49,14 @@ def package(line):
             line = line.replace(ch, "")
     
     line = line.split(">")[0].split("=")[0].split("<")[0]
-    line = line.split("\\")[0].split("@latest")[0].split("~")[0]
+    line = line.split("\\")[0].split("~")[0]
 
-    if "@" in line and line[0] != "@":
-        line = ""
+    # strip @version specifiers: @scope/pkg@2.5 -> @scope/pkg, foo@1.2 -> foo
+    # (the versioned spelling 404s on the registry and reads as a takeover)
+    if line.count("@") > 1:
+        line = line[:line.rindex("@")]
+    elif "@" in line and line[0] != "@":
+        line = line.split("@")[0]
 
     if line.endswith("."):
         line = line[:-1]
@@ -58,6 +70,14 @@ def package(line):
         line = line[1:]
     
     line = line.split(" ")[0]
+
+    # flag arguments (pip -r requirements.txt, -t /target/dir) and stray
+    # prose that looks like a filename are not package names
+    if re.search(r'\.(txt|toml|ya?ml|json|lock|sh|md|py|js|ts|cfg|ini)$', line):
+        line = ""
+
+    if "/" in line and not line.startswith("@"):
+        line = ""
 
     if "%" in line:
         line = ""

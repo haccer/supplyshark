@@ -10,17 +10,32 @@ import re
 def gh_get_user(user):
     try:
         load_dotenv()
-        g = Github(auth=Auth.Token(getenv("GITHUB_AUTH")))
+        token = getenv("GITHUB_AUTH")
+        # unauthenticated access works for public accounts (60 req/hr);
+        # a token raises the limit and unlocks private repos
+        g = Github(auth=Auth.Token(token)) if token else Github()
         user = g.get_user(user)
     except:
         user = None
     return user
 
+def gh_get_repo_branch(user, repo):
+    """Default branch for a single repo, so -r scans get working permalinks."""
+    try:
+        load_dotenv()
+        token = getenv("GITHUB_AUTH")
+        g = Github(auth=Auth.Token(token)) if token else Github()
+        r = g.get_repo(f"{user}/{repo}")
+        return [{"repo_name": repo, "default_branch": r.default_branch}]
+    except:
+        return []
+
 def gh_get_repos(user):
     g = gh_get_user(user)
-    
+
     if g is None:
-        print(f"[!] Account {user} does not exist.")
+        print(f"[!] Account {user} does not exist (or API rate limit hit; "
+              f"set GITHUB_AUTH for a higher limit).")
         return None, None
     
     else:
@@ -44,14 +59,19 @@ def cli_gh_clone_repo(user, repo):
     path = f"/tmp/.supplyshark/{user}/{repo}"
     load_dotenv()
     auth_method = "x-access-token"
+    token = getenv("GITHUB_AUTH")
     try:
-        callbacks = pygit2.RemoteCallbacks(pygit2.UserPass(auth_method, getenv("GITHUB_AUTH")))
-        pygit2.clone_repository(f"https://github.com/{user}/{repo}.git", path, callbacks=callbacks)
+        if token:
+            callbacks = pygit2.RemoteCallbacks(pygit2.UserPass(auth_method, token))
+            pygit2.clone_repository(f"https://github.com/{user}/{repo}.git", path, callbacks=callbacks)
+        else:
+            pygit2.clone_repository(f"https://github.com/{user}/{repo}.git", path)
         clean_git(path)
         search.get_packages(path, user, repo)
         rmtree(path)
-    except:
-        pass
+    except Exception as e:
+        print(f"[!] Failed to clone {user}/{repo} "
+              f"({'private or missing without a GITHUB_AUTH token' if not token else type(e).__name__})")
 
 def return_user(value):
     if re.compile(r"[A-Za-z0-9]+/([A-Za-z0-9]+)", re.IGNORECASE).match(value):

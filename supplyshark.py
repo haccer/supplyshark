@@ -20,18 +20,26 @@ async def npm(copy_dir, sem, super_sem):
 
     package_list = list(set(newlist + shark.npm.read_npm_search_json(copy_dir)))
 
-    if len(package_list) == 1:
+    # scoped names short-circuit at the scope level: one verdict per scope,
+    # taken => nothing under it is claimable, available => one finding
+    # covers every package under it
+    unscoped = sorted(p for p in package_list if not p.startswith("@"))
+    by_scope = {}
+    for package in package_list:
+        if package.startswith("@") and "/" in package and not package.startswith("@@"):
+            by_scope.setdefault(package.split("/")[0], []).append(package)
+
+    if len(unscoped) == 1:
         package_msg = "package."
     else:
         package_msg = "packages."
 
-    print(f"{info_msg} Scanning {len(package_list)} npm {package_msg}")
-    
+    print(f"{info_msg} Scanning {len(unscoped)} npm {package_msg}")
+
     async with super_sem:
         package_results = await asyncio.gather(*[
             shark.npm.scan_packages(copy_dir, package)
-            for package in package_list
-            if not package.startswith("@")
+            for package in unscoped
         ])
         package_results = [result for result in package_results if result is not None and result]
 
@@ -41,15 +49,10 @@ async def npm(copy_dir, sem, super_sem):
         print(f"{no_msg} Found no available npm packages.")
     else:
         total_package_results_fmt = found_fmt(total_package_results)
+        print(f"{found_msg} Found {total_package_results_fmt} available npm "
+              f"{'package.' if total_package_results == 1 else 'packages.'}")
 
-        if total_package_results == 1:
-            package_msg = "package."
-        else:
-            package_msg = "packages."
-
-        print(f"{found_msg} Found {total_package_results_fmt} available npm {package_msg}")
-
-    scope_list = list(set(scope.split("/")[0] for scope in package_list if scope.startswith("@") and '/' in scope and not "@@" in scope and not "@json-rpc-tools" in scope))
+    scope_list = sorted(by_scope)
 
     if len(scope_list) == 1:
         scope_msg = "scope."
@@ -60,27 +63,22 @@ async def npm(copy_dir, sem, super_sem):
 
     async with super_sem:
         scope_results = await asyncio.gather(*[
-            shark.npm.scope_available(copy_dir, scope)
-            for scope in scope_list
+            shark.npm.scope_check(copy_dir, scope, packages)
+            for scope, packages in by_scope.items()
         ])
         scope_results = [result for result in scope_results if result is not None and result]
 
     total_scope_results = len(scope_results)
 
     if total_scope_results == 0:
-        print(f"{no_msg} Found no available npm packages via available scope.")
+        print(f"{no_msg} Found no available npm scopes.")
     else:
         total_scope_results_fmt = found_fmt(total_scope_results)
+        print(f"{found_msg} Found {total_scope_results_fmt} available "
+              f"{'scope.' if total_scope_results == 1 else 'scopes.'}")
 
-        if total_scope_results == 1:
-            scope_msg = "scope."
-        else:
-            scope_msg = "scopes."
-
-        print(f"{found_msg} Found {total_scope_results_fmt} available {scope_msg}")
-    
     print(f"{info_msg} npm scan complete.")
-    
+
     results = {
         "package_results": package_results,
         "scope_results": scope_results
@@ -132,8 +130,9 @@ async def gem(copy_dir, super_sem):
 async def pip(copy_dir, sem, super_sem):
     async with sem:
         piplist = await shark.pip.find_requirements_txt(copy_dir)
+        pyproject_list = shark.pip.find_pyproject_toml(copy_dir)
 
-    pip_list = list(set(piplist + shark.pip.read_pip_search_json(copy_dir)))
+    pip_list = list(set(piplist + pyproject_list + shark.pip.read_pip_search_json(copy_dir)))
 
     if len(pip_list) == 1:
         pip_msg = "package."
@@ -172,8 +171,10 @@ async def pip(copy_dir, sem, super_sem):
     return {"pip_results": results}
 
 def cleanup(copy_dir, tmp):
-    rmtree(copy_dir)
-    rmtree(tmp)
+    # ignore_errors: a second scanner instance (or a wiped /tmp) may have
+    # already removed these; cleanup must never kill a sweep
+    rmtree(copy_dir, ignore_errors=True)
+    rmtree(tmp, ignore_errors=True)
 
 def create_dir(account):
     tmp = f"/tmp/.supplyshark/{account}"
@@ -190,7 +191,7 @@ async def start_cli(account, repo):
 
     if repo:
         repo_queue = [repo]
-        gh_check = []
+        gh_check = shark.github.gh_get_repo_branch(account, repo)
     else:
         repo_queue, gh_check = shark.github.gh_get_repos(account)
     
@@ -212,10 +213,33 @@ async def start_cli(account, repo):
             for repo in repo_queue
         ])
 
-    data = await asyncio.gather(
-        npm(copy_dir, sem, super_sem),
-        gem(copy_dir, super_sem)
-    )
+    try:
+        npm_results, gem_results, pip_results, mcp_url_results, url_results = await asyncio.gather(
+            npm(copy_dir, sem, super_sem),
+            gem(copy_dir, super_sem),
+            pip(copy_dir, sem, super_sem),
+            shark.search.mcp_url_findings(copy_dir),
+            shark.search.url_findings(copy_dir)
+        )
+    finally:
+        await shark.registry.close()
+
+    for label, items, noun in (
+        ("MCP endpoint", mcp_url_results, "findings"),
+        ("dead-domain", url_results, "findings"),
+    ):
+        if items:
+            print(f"{found_msg} Found {found_fmt(len(items))} {label} {noun}.")
+        else:
+            print(f"{no_msg} Found no {label} {noun}.")
+
+    data = {
+        "npm_results": npm_results["npm_results"],
+        "gem_results": gem_results["gem_results"],
+        "pip_results": pip_results["pip_results"],
+        "mcp_url_results": mcp_url_results,
+        "url_results": url_results
+    }
 
     cleanup(copy_dir, tmp)
 
@@ -223,7 +247,6 @@ async def start_cli(account, repo):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--cli", type=bool, action=argparse.BooleanOptionalAction)
     parser.add_argument("-u", type=str)
     parser.add_argument("-l", type=str)
     parser.add_argument('-r', type=str)
@@ -240,21 +263,34 @@ if __name__ == "__main__":
             pass
         
         if results:
-            shark.results.process_results(results, gh_check)
+            total = shark.results.process_results(results, gh_check)
+            print(f"{found_msg} Wrote {found_fmt(total)} findings to results.txt")
     elif args.l is not None:
+        grand_total = 0
+        accounts = 0
         with open(args.l, 'r') as f:
             for u in f.readlines():
-                print(f"{info_msg} Scanning account {u.strip()}")
+                account = u.strip()
+                if not account:
+                    continue
+                print(f"{info_msg} Scanning account {account}")
+                accounts += 1
                 loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(loop)
 
                 try:
-                    results, gh_check = asyncio.run(start_cli(u.strip(), None))
+                    results, gh_check = asyncio.run(start_cli(account, None))
                 except KeyboardInterrupt:
-                    pass
-                
+                    raise
+                except Exception as e:
+                    print(f"[!] Account {account} failed ({type(e).__name__}: {e}); continuing.")
+                    results = None
+
                 if results:
-                    shark.results.process_results(results, gh_check)
+                    grand_total += shark.results.process_results(results, gh_check)
+
+        print(f"{found_msg} Scanned {found_fmt(accounts)} accounts; "
+              f"wrote {found_fmt(grand_total)} findings to results.txt")
     else:
         print(f"{no_msg} Please specify -u or -l")
         exit(0)

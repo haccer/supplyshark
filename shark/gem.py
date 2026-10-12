@@ -1,51 +1,47 @@
-from . import search, clean
+from . import registry, search, clean
 from collections import defaultdict
-import aiohttp
-import asyncio
+from pathlib import Path
+from urllib.parse import quote
 import json
 import re
-import shlex
 
 def read_gem_search_json(path: str) -> list:
     matches = defaultdict(set)
 
-    with open(f"{path}/gem_search.json", 'r', encoding='utf-8') as f:
+    search_file = Path(path) / "gem_search.json"
+    if not search_file.exists():
+        return []
+
+    with open(search_file, 'r', encoding='utf-8') as f:
         for line in f:
             match_dict = json.loads(line.strip())
             matches[match_dict['match']]
-    
+
     matches_list = list(matches.keys())
     return clean.gem_search(matches_list)
 
-async def scan_gems(path, gem):
-    command = f"gem search '{gem}'"
-    process = await asyncio.create_subprocess_exec(*shlex.split(command),
-                                                   stdout=asyncio.subprocess.PIPE,
-                                                   stderr=asyncio.subprocess.PIPE)
-    resp = await process.stdout.read()
-    
-    results = []
+async def gem_missing(gem: str) -> bool:
+    names = {gem}
+    if gem != gem.lower():
+        names.add(gem.lower())
+    for name in names:
+        status = await registry.status(f"https://rubygems.org/api/v1/gems/{quote(name)}.json")
+        if status != 404:
+            return False
+    return True
 
-    if resp == b'\n' and await gem_404(gem):
-        results = [{"package": gem}]
-        search_data = await search.package_search_json_results(f"{path}/gem_search.json", gem)
-        results.extend(search_data)
-    
+async def scan_gems(path, gem):
+    if not await gem_missing(gem):
+        return []
+
+    results = [{"package": gem}]
+    search_data = await search.package_search_json_results(f"{path}/gem_search.json", gem)
+    results.extend(search_data)
+
     if results == [{"package": gem}]:
         results = []
-        
-    return results    
 
-async def gem_404(gem):
-    url = f"https://rubygems.org/gems/{gem}"
-
-    async with aiohttp.ClientSession() as session:
-        async with session.get(url) as resp:
-            if resp.status == 404:
-                return True
-            else:
-                return False
-
+    return results
 
 def gem_files(gemfile):
     results = []

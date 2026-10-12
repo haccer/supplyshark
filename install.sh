@@ -6,13 +6,10 @@ sudo add-apt-repository ppa:deadsnakes/ppa -y
 # Make sure we're up-to-date
 sudo apt update && sudo apt upgrade -y
 
-# Install packages
+# Install packages (registry checks use HTTP APIs; only ripgrep is needed
+# outside Python itself)
 sudo apt install ripgrep \
-                nodejs \
-                npm \
-                ruby-dev \
                 python3-dev \
-                python3-poetry \
                 python3.12-dev \
                 -y
 
