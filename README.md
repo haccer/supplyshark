@@ -2,10 +2,10 @@
 
 
                    /""-._
-                  .      '-,
-                  :         '',
-                  ;      *     '.
-                  ' *         () '.
+                      .      '-,
+                      :         '',
+                      ;      *     '.
+                      ' *         () '.
                    \               \
                     \      _.---.._ '.
                      :  .' _.--''-''  \ ,'
@@ -27,136 +27,126 @@
 
           - - - {  S U P P L Y  S H A R K  } - - -
 
-SupplyShark is a Python-based reconnaissance tool that finds **takeover targets in public code**: package names, npm scopes, and domains that are referenced by GitHub repositories but unclaimed on their registry. Register the name, capture the reference — the dependency-confusion class of attack, plus its AI-era extensions. Every finding is verified claimable before it's reported; if a line lands in `results.txt`, registering something gets you code execution somewhere.
+Finds **takeover targets in public code**: package names, npm scopes, and
+domains referenced by GitHub repositories but unclaimed on their registry.
+Every finding is verified claimable before it's reported.
 
-## 🦈 Origin Story
-SupplyShark began as the detection engine for a SaaS platform designed to monitor software supply chains in real-time.
-
-While the commercial platform has been sunset, I have open-sourced the core scanner. This tool automates the process of finding "dangling" or unclaimed packages that match internal company names or popular libraries—a vector often used in **Dependency Confusion** attacks.
-
-> Note: This tool was used to identify critical vulnerabilities in major crypto protocols and Fortune 500 companies via **HackerOne** and **Immunefi**. 💰
-
-## ⚡ Capabilities
-SupplyShark automates the cross-referencing of package names against public registries to identify potential takeover targets.
-
-🕵️‍♂️ **Cross-Registry Recon:** Simultaneously queries `npm`, `PyPI`, and `RubyGems` via their public HTTP APIs to see if a package name exists on one but is unregistered on others. Scoped npm packages are only reported when their scope is unpopulated — a missing package under a live org (like `@openzeppelin`) can't be claimed by anyone else, so those are dropped automatically.
-
-📦 **Account Scanning:** Clones and sweeps every non-forked, non-archived repo of a GitHub user or org — dependency manifests (`package.json`, `requirements*.txt`, `pyproject.toml`, `Gemfile`), docs, CI workflows, and agent configs alike.
-
-📋 **Bulk Scanning:** Scan lists of GitHub accounts (`-l accounts.txt`, one per line) to sweep hundreds of targets in one run. One bad account never kills the sweep.
-
-🔍 **GitHub Integration:** Repo discovery and cloning via token, findings cited with `blob/<default-branch>` permalinks ready for reports.
-
-🤖 **AI-Agent Attack Surface:** Parses MCP server configs (`mcp.json`, `.cursor/mcp.json`, `claude_desktop_config.json`, `.gemini/settings.json`, ...) and agent instruction files (`CLAUDE.md`, `AGENTS.md`, `.cursorrules`, `.github/copilot-instructions.md`, ...) for commands AI coding agents execute — `npx`, `bunx`, `uvx`, `pipx`, `uv run --with`, `python -m`, `poetry add`, `uv add`, `pnpm dlx` — and flags any that reference packages missing from their registry. Remote MCP server URLs are checked for claimable domains (re-registration = the agent's connection gets taken over).
-
-🏷️ **Surface Tags:** Findings carry where they live: `:agent` (instruction files agents follow automatically) and `:ci` (GitHub Actions workflows — executes on push). `[pip:agent]` reads very differently from `[pip]`.
-
-🌐 **Unregistered-Domain Takeover Surface:** Collects every hostname referenced by an http(s) URL across configs and docs (`.npmrc`, `pip.conf`, `renovate.json`, install instructions, ...) and reports only domains verified claimable: registrable apex dead in DNS **and** unregistered per RDAP. Registered-but-undelegated domains, dead subdomains under live apexes, and placeholder hosts are filtered out automatically — if it appears in results, registering it captures something.
-
-## 🎯 What gets reported
-
-Six finding classes, all verified claimable first — nothing informational, nothing you can't act on:
+## What it finds
 
 | Label | Finding | Verified by |
 |---|---|---|
-| `[npm]` | Unscoped npm name referenced in code/docs but unregistered | registry 404 |
-| `[npm scope]` | Unclaimed npm scope — one registration claims every listed package | profile 404 + package-existence probe |
-| `[pip]` | PyPI name unregistered (PEP 503 normalized) | PyPI JSON API 404 |
+| `[npm]` | npm name referenced but unregistered | registry 404 |
+| `[npm scope]` | Unclaimed npm scope — one registration claims every listed package | profile 404 + probe |
+| `[pip]` | PyPI name unregistered (PEP 503 normalized) | PyPI API 404 |
 | `[gem]` | RubyGems name unregistered | RubyGems API 404 |
 | `[mcp-url]` | MCP server endpoint on a claimable domain | DNS + RDAP |
-| `[domain]` | Any referenced hostname on a claimable domain (registrable apex dead AND unregistered) | DNS + RDAP |
+| `[domain]` | Referenced hostname on a claimable domain | DNS + RDAP |
 
-Modifiers: `:agent` (reference lives in an instruction file agents follow automatically — `CLAUDE.md`, `AGENTS.md`, `.cursorrules`, ...) and `:ci` (lives in a GitHub Actions workflow — executes on push). `[npm scope]` findings list every covered package and carry `[scope ownership unverified]` when npm's bot protection blocked the account check — verify by hand before acting on those.
+Modifiers: `:agent` (instruction file agents follow), `:ci` (GitHub
+Actions workflow), and npm exec-path tags `:runner` (npx/bunx),
+`:dep` (runtime dependency), `:dev` (devDependency).
 
-Everything else is filtered out on purpose: missing packages under live scopes (not claimable), versioned spellings (`pkg@1.2`), git/file dependency refs, `node_modules`, placeholder hosts and invented TLDs, registered-but-dead domains, and dead subdomains under live apexes.
+**When does a taken-over npm name execute?** (npm 12 blocks dependency
+install scripts by default; verified against npm 11.19 and 12.2 with
+`scripts/verify_npm_exec_paths.sh` / `scripts/demo_npm_rce.sh`):
 
-## Prerequisites
+| Victim action | npm < 12 | npm 12+ |
+|---|---|---|
+| `npm install <x>` alone | RCE at install | delivered, no execution yet |
+| `npm install <x>`, victim's own scripts then invoke the bin | RCE at install | **RCE** (root scripts not gated; `.bin` on their PATH) |
+| `npm install` (full), victim's postinstall invokes the bin | RCE at install | **RCE during install** |
+| `npx <x>` | RCE | **RCE** |
+| app imports the dependency | RCE | **RCE** (import-time) |
+| `npm install -g <x>`, then running `<x>` | RCE at install | **RCE on invocation** (bin linked) |
 
-- Python 3.10+ (3.11+ for `pyproject.toml` dependency parsing)
-- ripgrep (`rg`)
+Proof per path: `scripts/demo_npm_rce.sh <name> <runner|dep|tool|ownscript|global>`.
+PyPI and RubyGems have no equivalent gating — install-time RCE unchanged.
 
-All registry availability checks use the public HTTP APIs (PyPI JSON API, npm registry, RubyGems API) — no `npm`, `gem`, or `poetry` CLIs required.
+Scans every non-forked, non-archived repo of an account: dependency
+manifests, docs, CI workflows, and agent configs (`mcp.json`,
+`claude_desktop_config.json`, ...) — including the commands AI coding
+agents execute (`npx`, `uvx`, `python -m`, ...).
 
-## Install
+## False-positive suppression
+
+Junk dies before any registry request: names must pass `shark/validate.py`
+registry grammars (stopwords, placeholder vocabulary, version strings,
+node core modules), `spec/`/`test/`/`fixtures/` trees are excluded,
+`[tool.uv.sources]` git/path redirects are skipped, `npx` names shadowed
+by locally-declared bins are suppressed, `.npmrc`-pinned scopes are
+dropped, and prose files named `requirements*.txt` are content-sniffed.
+Rules are corpus-tuned with regression tests — see `tests/test_validate.py`.
+
+## Usage
 
 ```
 pip install -r requirements.txt
 ```
 
-## Configure
-
-Create a `.env` file (see `env.sample`) with a GitHub token:
-
-```
-GITHUB_AUTH=ghp_...
-# Optional: raises npm registry rate limits for mass scans
-NPM_TOKEN=npm_...
-```
-
-Use a read-only GitHub token — a classic PAT with zero scopes is enough for public scanning (5000 API req/hr vs 60 unauthenticated). Add `repo` scope only if you need to scan private repositories. PyPI and RubyGems have no auth concept for read-only lookups; npm does, hence the optional token. Rebuild the bounty target list with `python scripts/build_bbp.py`.
-
-## Usage
-
-Scan all repos for a GitHub account:
+Prerequisites: Python 3.10+ (3.11+ for pyproject parsing), ripgrep.
+Create `.env` with `GITHUB_AUTH=ghp_...` (read-only token; see `env.sample`).
 
 ```
-python supplyshark.py -u <github_account>
+python supplyshark.py -u <account>                  # one account
+python supplyshark.py -u <account> -r <repo>        # one repo
+python supplyshark.py -l accounts.txt --resume      # sweep, resumable
+python supplyshark.py -u <account> --npm --pip      # registry subset
+python supplyshark.py -u <account> --dead-domains   # + DNS/RDAP checks
 ```
 
-Scan a single repo:
+Results append to `results.txt` with `blob/<branch>` permalinks.
+Registry answers cache for 30 days; Ctrl-C is safe and re-runs resume
+cheaply. Registry checks are concurrency-capped with retry/backoff, and
+only explicit 404s count as claimable — throttling degrades recall,
+never correctness. Rebuild the bounty-program target list with
+`python scripts/build_bbp.py`.
 
-```
-python supplyshark.py -u <github_account> -r <repo_name>
-```
+## Triage with an AI agent
 
-Scan a list of accounts (one per line):
+`AGENTS.md` is written for AI coding agents (auto-discovered by Claude
+Code, Cursor, and similar tools) and humans alike. It contains the full
+findings-to-report workflow: context triage, docs/cross-org/bug-bounty
+scope checks, the measured npm 12 execution model, and the local-PoC
+safety rules. Research work products stay in gitignored `triage/`.
 
-```
-python supplyshark.py -l accounts.txt
-```
+## Validating findings — PoC packages & the fake registry
 
-Results are appended to `results.txt`. Temporary clones are created under `/tmp/.supplyshark` and cleaned up after each run. For long sweeps, run inside tmux with unbuffered output captured to a log:
+**For educational and authorized-testing use only.**
 
-```
-python -u supplyshark.py -l bbp.txt 2>&1 | tee scan.log
-```
+- [`scripts/fake_registry.py`](scripts/fake_registry.py) — a localhost
+  stand-in for npm/PyPI/RubyGems. Serves any name a victim's package
+  manager asks about, logs every resolution, delivers marker payloads.
+  Proves dependency confusion end to end — including registry-priority
+  scenarios against a scratch copy of a victim repo — without uploading
+  anything to a real registry.
+- [`poc_packages/`](poc_packages/README.md) — PoC packages per registry
+  (npm/PyPI/RubyGems) in three categories: `dns` (install-time canary),
+  `placeholder` (inert name-holder for coordinated disclosure), `rce`
+  (code execution at the registry's earliest execution point: npm
+  `preinstall`, PyPI sdist `setup.py`, RubyGems `extconf.rb`).
 
-Ctrl-C is safe and re-running resumes cheaply — registry answers persist in a 30-day disk cache, so already-checked names are never re-queried.
+When a new npm/pnpm/yarn version drops, re-measure client behavior with
+`scripts/verify_npm_exec_paths.sh` before making install-script impact
+claims. See [poc_packages/README.md](poc_packages/README.md) for commands,
+per-registry execution-point differences, and safety rules. Never publish
+to a real registry except deliberate, human-approved placeholders during
+disclosure.
 
-## 🧪 Tests
+## Tests
 
-The fixture cases from the original `supplyshark/tests` vulnerable repo live in `tests/` as a hermetic pytest suite — no network, registries faked, so it runs in seconds and is CI-safe:
+Hermetic (no network, registries faked):
 
 ```
 pip install -r requirements.txt -r requirements-dev.txt
 pytest
 ```
 
-Opt-in live smoke tests against the real registries (6 requests, also validates the cache):
+Live smoke tests (6 requests): `pytest -m live`.
 
-```
-pytest -m live
-```
+## Legal
 
-## 🐌 Rate Limits
+**For educational and defensive use only.** Intended for securing your
+own infrastructure or authorized bug bounty programs. Registering
+malicious packages or attacking targets without permission is illegal.
 
-All registry checks are direct HTTP with three protections baked in (`shark/registry.py`):
-
-- **Concurrency cap** — at most 10 in-flight registry requests per run
-- **Retry with backoff** — 429/5xx answers are retried up to 3 times with exponential backoff, honoring `Retry-After`
-- **30-day disk cache** — definitive 200/404 answers persist at `/tmp/.supplyshark/registry-cache.json`, so repeat scans of the same accounts don't re-query (delete the file to force fresh checks)
-
-Only an explicit 404 counts as "available" — rate-limited or failed lookups are treated as taken, so throttling degrades recall, never correctness.
-
-## ⚠️ Legal Disclaimer
-**For Educational and Defensive Use Only.** This tool is intended to help security professionals secure their own infrastructure or participate in authorized bug bounty programs. Using this tool to register malicious packages or attack targets without permission is illegal. The author assumes no liability for misuse.
-
-## 🤝 Contributing
-We welcome contributions from the security community!
-
-## 📄 License
-MIT License. See `LICENSE`.
-
----
-
-A cybersecurity tool by [@haccer](https://github.com/haccer)
+MIT License. A tool by [@haccer](https://github.com/haccer).

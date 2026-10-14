@@ -1,3 +1,4 @@
+from conftest import REPO
 """rg-stream extraction: MCP configs, shell pipes, reference matching."""
 import json
 
@@ -25,7 +26,7 @@ def test_mcp_config_files_extracts_runner_packages(work_tree):
     assert not any("server.js" in m for m in npm_matches + pip_matches)
 
     entry = next(item for item in npm_stream if item["match"] == "npx supplysharkmcp-npm")
-    assert entry["file"] == "testuser/tests/.cursor/mcp.json"
+    assert entry["file"] == f"testuser/{REPO}/.cursor/mcp.json"
 
     # remote server URLs are collected for takeover/insecurity checks
     url_matches = {item["match"] for item in url_stream}
@@ -83,7 +84,7 @@ async def test_mcp_url_findings_classify(work_tree, monkeypatch):
                       "http://insecure.example/mcp": "unregistered-domain"}
     # refs are attached for permalinks
     dead = next(item for item in findings if item[0]["url"] == "https://dead.invalid/mcp")
-    assert dead[1][0]["file"] == "testuser/tests/.cursor/mcp.json"
+    assert dead[1][0]["file"] == f"testuser/{REPO}/.cursor/mcp.json"
 
 
 async def test_mcp_url_findings_skip_live_domains(work_tree, monkeypatch):
@@ -103,7 +104,7 @@ async def test_reference_matching_is_boundary_aware(work_tree):
     stream = output_root / "testuser" / "boundary_search.json"
     with open(stream, "w") as f:
         for line in ["npm install foo", "pip install foo-bar", "yarn add foo==1.0.2"]:
-            f.write(json.dumps({"file": "testuser/tests/x.md", "line_number": "1", "match": line}) + "\n")
+            f.write(json.dumps({"file": f"testuser/{REPO}/x.md", "line_number": "1", "match": line}) + "\n")
 
     matches = await search.package_search_json_results(str(stream), "foo")
     # "foo-bar" and "foo==..." must not be attributed to "foo" via substring;
@@ -167,9 +168,9 @@ async def test_url_findings_reports_only_dead_hosts(work_tree, monkeypatch):
     with open(stream, "w") as f:
         for host, fname in [("dead.one.example.io", "a.md"), ("live.one.example.io", "b.md"),
                             ("mcp-covered.example.io", "c.md"), ("dead.one.example.io", "d.md")]:
-            f.write(json.dumps({"file": f"testuser/tests/{fname}", "line_number": "1", "match": host}) + "\n")
+            f.write(json.dumps({"file": f"testuser/{REPO}/{fname}", "line_number": "1", "match": host}) + "\n")
     with open(copy_dir / "mcp_url_search.json", "w") as f:
-        f.write(json.dumps({"file": "testuser/tests/.cursor/mcp.json", "line_number": "2",
+        f.write(json.dumps({"file": f"testuser/{REPO}/.cursor/mcp.json", "line_number": "2",
                             "match": "https://mcp-covered.example.io/mcp"}) + "\n")
 
     # apexes: example.io and root-dead.io's parent resolution semantics
@@ -189,11 +190,11 @@ async def test_url_findings_reports_only_dead_hosts(work_tree, monkeypatch):
     monkeypatch.setattr(search.registry, "domain_registered", fake_registered)
 
     with open(stream, "a") as f:
-        f.write(json.dumps({"file": "testuser/tests/e.md", "line_number": "1",
+        f.write(json.dumps({"file": f"testuser/{REPO}/e.md", "line_number": "1",
                             "match": "sub.root-dead.io"}) + "\n")
-        f.write(json.dumps({"file": "testuser/tests/f.md", "line_number": "1",
+        f.write(json.dumps({"file": f"testuser/{REPO}/f.md", "line_number": "1",
                             "match": "www.root-alive.io"}) + "\n")
-        f.write(json.dumps({"file": "testuser/tests/g.md", "line_number": "1",
+        f.write(json.dumps({"file": f"testuser/{REPO}/g.md", "line_number": "1",
                             "match": "host.regd-dead.io"}) + "\n")
 
     findings = await search.url_findings(str(copy_dir))
@@ -210,7 +211,7 @@ async def test_url_findings_skipped_when_resolver_broken(work_tree, monkeypatch,
     repo_dir, output_root = work_tree
     copy_dir = output_root / "testuser"
     with open(copy_dir / "urls_search.json", "w") as f:
-        f.write(json.dumps({"file": "testuser/tests/a.md", "line_number": "1",
+        f.write(json.dumps({"file": f"testuser/{REPO}/a.md", "line_number": "1",
                             "match": "github.com"}) + "\n")
 
     async def dead_resolver(host):

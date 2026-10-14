@@ -170,6 +170,16 @@ async def pip(copy_dir, sem, super_sem):
 
     return {"pip_results": results}
 
+ALL_REGISTRIES = ("npm", "pip", "gem")
+
+
+def selected_registries(args):
+    """--npm/--pip/--gem restrict the scan to those registries; with none
+    given, all three run (the historical behavior)."""
+    chosen = [r for r in ALL_REGISTRIES if getattr(args, r, False)]
+    return chosen or list(ALL_REGISTRIES)
+
+
 def cleanup(copy_dir, tmp):
     # ignore_errors: a second scanner instance (or a wiped /tmp) may have
     # already removed these; cleanup must never kill a sweep
@@ -183,7 +193,8 @@ def create_dir(account):
     Path(copy_dir).mkdir(parents=True, exist_ok=True)
     return tmp, copy_dir
 
-async def start_cli(account, repo):
+async def start_cli(account, repo, dead_domains=False, registries=None):
+    registries = registries or list(ALL_REGISTRIES)
     tmp, copy_dir = create_dir(account)
 
     sem = asyncio.Semaphore(10)
@@ -207,22 +218,47 @@ async def start_cli(account, repo):
 
     print(f"{info_msg} Scanning {len(repo_queue)} {repo_msg}")
 
-    async with sem:
-        await asyncio.gather(*[
-            asyncio.to_thread(shark.github.cli_gh_clone_repo, account, repo)
-            for repo in repo_queue
-        ])
+    async def clone_one(repo):
+        # one permit per clone: a batch-wide semaphore limits nothing and
+        # lets every repo clone at once on large orgs
+        async with sem:
+            await asyncio.to_thread(shark.github.cli_gh_clone_repo, account, repo)
 
-    try:
-        npm_results, gem_results, pip_results, mcp_url_results, url_results = await asyncio.gather(
-            npm(copy_dir, sem, super_sem),
-            gem(copy_dir, super_sem),
-            pip(copy_dir, sem, super_sem),
+    await asyncio.gather(*[clone_one(repo) for repo in repo_queue])
+
+    if not dead_domains:
+        print(f"{info_msg} Dead-domain checks off; pass --dead-domains to run "
+              f"them (DNS + RDAP on every referenced hostname).")
+
+    async def dead_domain_checks():
+        """Both DNS-backed domain checks, gated behind --dead-domains:
+        resolving every referenced hostname (plus RDAP for the dead ones)
+        is the slowest part of a scan, and registry/npm/pip/gem findings
+        don't depend on it."""
+        if not dead_domains:
+            return [], []
+        return await asyncio.gather(
             shark.search.mcp_url_findings(copy_dir),
             shark.search.url_findings(copy_dir)
         )
+
+    scan_tasks = {}
+    if "npm" in registries:
+        scan_tasks["npm"] = npm(copy_dir, sem, super_sem)
+    if "gem" in registries:
+        scan_tasks["gem"] = gem(copy_dir, super_sem)
+    if "pip" in registries:
+        scan_tasks["pip"] = pip(copy_dir, sem, super_sem)
+    scan_tasks["domains"] = dead_domain_checks()
+    for skipped in [r for r in ALL_REGISTRIES if r not in registries]:
+        print(f"{no_msg} Skipping {skipped} scan (--only {','.join(registries)}).")
+
+    try:
+        by_name = dict(zip(scan_tasks.keys(), await asyncio.gather(*scan_tasks.values())))
     finally:
         await shark.registry.close()
+
+    mcp_url_results, url_results = by_name["domains"]
 
     for label, items, noun in (
         ("MCP endpoint", mcp_url_results, "findings"),
@@ -233,10 +269,11 @@ async def start_cli(account, repo):
         else:
             print(f"{no_msg} Found no {label} {noun}.")
 
+    empty_pkg = {"package_results": []}
     data = {
-        "npm_results": npm_results["npm_results"],
-        "gem_results": gem_results["gem_results"],
-        "pip_results": pip_results["pip_results"],
+        "npm_results": (by_name.get("npm") or {"npm_results": {"package_results": [], "scope_results": []}})["npm_results"],
+        "gem_results": (by_name.get("gem") or {"gem_results": empty_pkg})["gem_results"],
+        "pip_results": (by_name.get("pip") or {"pip_results": empty_pkg})["pip_results"],
         "mcp_url_results": mcp_url_results,
         "url_results": url_results
     }
@@ -249,8 +286,22 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("-u", type=str)
     parser.add_argument("-l", type=str)
+    parser.add_argument("--resume", action="store_true",
+                        help="skip accounts already recorded in progress.txt")
+    parser.add_argument("--dead-domains", action="store_true",
+                        help="run the DNS-based dead-domain checks (slow; off "
+                             "by default)")
     parser.add_argument('-r', type=str)
+    parser.add_argument('--npm', action='store_true',
+                        help="scan only the npm registry (packages + scopes)")
+    parser.add_argument('--pip', action='store_true',
+                        help="scan only PyPI")
+    parser.add_argument('--gem', action='store_true',
+                        help="scan only RubyGems")
     args = parser.parse_args()
+    registries = selected_registries(args)
+    if registries != list(ALL_REGISTRIES):
+        print(f"{info_msg} Registry selection: {', '.join(registries)}")
 
     if args.u is not None:
         print(f"{info_msg} Scanning account {args.u}")
@@ -258,7 +309,7 @@ if __name__ == "__main__":
         asyncio.set_event_loop(loop)
 
         try:
-            results, gh_check = asyncio.run(start_cli(args.u, args.r))
+            results, gh_check = asyncio.run(start_cli(args.u, args.r, args.dead_domains, registries))
         except KeyboardInterrupt:
             pass
         
@@ -268,10 +319,19 @@ if __name__ == "__main__":
     elif args.l is not None:
         grand_total = 0
         accounts = 0
+        progress_file = Path("progress.txt")
+        done = set()
+        if args.resume and progress_file.exists():
+            done = {line.strip().lower() for line in progress_file.read_text().splitlines()
+                    if line.strip()}
+            print(f"{info_msg} Resuming: {len(done)} account(s) already scanned")
         with open(args.l, 'r') as f:
             for u in f.readlines():
                 account = u.strip()
                 if not account:
+                    continue
+                if account.lower() in done:
+                    print(f"{info_msg} Skipping {account} (already scanned)")
                     continue
                 print(f"{info_msg} Scanning account {account}")
                 accounts += 1
@@ -279,7 +339,7 @@ if __name__ == "__main__":
                 asyncio.set_event_loop(loop)
 
                 try:
-                    results, gh_check = asyncio.run(start_cli(account, None))
+                    results, gh_check = asyncio.run(start_cli(account, None, args.dead_domains, registries))
                 except KeyboardInterrupt:
                     raise
                 except Exception as e:
@@ -288,6 +348,11 @@ if __name__ == "__main__":
 
                 if results:
                     grand_total += shark.results.process_results(results, gh_check)
+
+                # record completion (zero-finding accounts too) so --resume
+                # never re-scans them
+                with open(progress_file, "a") as f:
+                    f.write(account.lower() + "\n")
 
         print(f"{found_msg} Scanned {found_fmt(accounts)} accounts; "
               f"wrote {found_fmt(grand_total)} findings to results.txt")

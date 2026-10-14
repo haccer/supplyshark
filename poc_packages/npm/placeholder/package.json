@@ -1,0 +1,7 @@
+{
+  "name": "supplyshark-poc-placeholder",
+  "version": "0.0.1",
+  "description": "Inert placeholder used to hold a package name during coordinated disclosure. Rename before publishing; identify the researcher in the description; transfer or remove on request. AUTHORIZED ENGAGEMENTS ONLY.",
+  "main": "index.js",
+  "license": "MIT"
+}

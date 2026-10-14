@@ -1,0 +1,12 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "supplyshark-poc-placeholder"
+version = "0.0.1"
+description = "Inert placeholder used to hold a package name during coordinated disclosure. Rename before publishing; identify the researcher in the description; transfer or remove on request. AUTHORIZED ENGAGEMENTS ONLY."
+requires-python = ">=3.8"
+
+[tool.setuptools]
+py-modules = []

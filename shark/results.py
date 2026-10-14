@@ -38,8 +38,16 @@ def npm_results(npm_data, repos, output_file="results.txt"):
                 bug_urls.append(bug_url)
                 repo_urls.append(repo_url)
 
+            # cap ref lists: a name hit in a big org cites hundreds of
+            # files; ten permalinks is enough to act on
+            bug_urls = list(dict.fromkeys(bug_urls))[:10]
+            repo_urls = list(dict.fromkeys(repo_urls))[:10]
             ref_files = [package_result[i][0]["file"] for i in range(1, len(package_result))]
-            _write_result(_label("npm", surfaces.package_surface(ref_files)), package, repo_urls, bug_urls, output_file)
+            label = _label("npm", surfaces.package_surface(ref_files))
+            exec_tag = package_result[0].get("exec")
+            if exec_tag:
+                label += f":{exec_tag}"
+            _write_result(label, package, repo_urls, bug_urls, output_file)
             count += 1
         except:
             pass
@@ -93,6 +101,10 @@ def gem_results(gem_data, repos, output_file="results.txt"):
                 bug_urls.append(bug_url)
                 repo_urls.append(repo_url)
 
+            # cap ref lists: a name hit in a big org cites hundreds of
+            # files; ten permalinks is enough to act on
+            bug_urls = list(dict.fromkeys(bug_urls))[:10]
+            repo_urls = list(dict.fromkeys(repo_urls))[:10]
             ref_files = [package_result[i][0]["file"] for i in range(1, len(package_result))]
             _write_result(_label("gem", surfaces.package_surface(ref_files)), package, repo_urls, bug_urls, output_file)
             count += 1
@@ -121,6 +133,10 @@ def pip_results(pip_data, repos, output_file="results.txt"):
                 bug_urls.append(bug_url)
                 repo_urls.append(repo_url)
 
+            # cap ref lists: a name hit in a big org cites hundreds of
+            # files; ten permalinks is enough to act on
+            bug_urls = list(dict.fromkeys(bug_urls))[:10]
+            repo_urls = list(dict.fromkeys(repo_urls))[:10]
             ref_files = [package_result[i][0]["file"] for i in range(1, len(package_result))]
             _write_result(_label("pip", surfaces.package_surface(ref_files)), package, repo_urls, bug_urls, output_file)
             count += 1
@@ -193,9 +209,10 @@ def process_results(results, repos, output_file="results.txt"):
     data = json.loads(results)
 
     counts = [
-        npm_results(data['npm_results'], repos, output_file),
-        gem_results(data['gem_results'], repos, output_file),
-        pip_results(data['pip_results'], repos, output_file),
+        npm_results(data.get('npm_results') or {"package_results": [], "scope_results": []},
+                    repos, output_file),
+        gem_results(data.get('gem_results') or {"package_results": []}, repos, output_file),
+        pip_results(data.get('pip_results') or {"package_results": []}, repos, output_file),
         mcp_url_results(data.get('mcp_url_results', []), repos, output_file),
         url_results(data.get('url_results', []), repos, output_file),
     ]

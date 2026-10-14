@@ -38,6 +38,7 @@ def get_packages(path, username, repo):
         (copy_files, (path, username, repo, 'requirements.txt')),
         (copy_files, (path, username, repo, '*requirements*.txt')),
         (copy_files, (path, username, repo, 'pyproject.toml')),
+        (copy_files, (path, username, repo, '.npmrc')),
     ]
 
     for func, args in func_args_list:
@@ -137,6 +138,7 @@ def find_urls(path, username):
             line = process.stdout.readline()
 
             if line == b'':
+                process.wait()  # reap rg; zombies exhaust maxproc on large orgs
                 break
 
             line = line.decode('utf-8')
@@ -157,7 +159,7 @@ def find_urls(path, username):
 def npm_install_files(path, username):
     # npx/bunx/pnpm dlx/yarn dlx execute packages straight off the registry;
     # they appear in READMEs and agent configs alike.
-    command = f"rg --hidden -g '!.git' -g '!**/node_modules/**' -e 'yarn add|yarn dlx|npm install|npm i |npm ci|pnpm install|pnpm add|pnpm dlx|npx |bun add|bunx ' -g '!*yarn-error.log' --no-heading -g '!*/node_modules' -n {path}"
+    command = f"rg --hidden -g '!.git' -g '!**/node_modules/**' -g '!**/spec/**' -g '!**/test/**' -g '!**/tests/**' -g '!**/fixtures/**' -g '!**/testdata/**' -g '!**/test-fixtures/**' -g '!**/__tests__/**' -e 'yarn add|yarn dlx|npm install|npm i |npm ci|pnpm install|pnpm add|pnpm dlx|npx |bun add|bunx ' -g '!*yarn-error.log' --no-heading -g '!*/node_modules' -n {path}"
     output_path = OUTPUT_ROOT / username
     output_file = f"{output_path}/npm_search.json"
     if not pathlib.Path(output_file).exists():
@@ -170,6 +172,7 @@ def npm_install_files(path, username):
         while True:
             line = process.stdout.readline()
             if line == b'':
+                process.wait()  # reap rg; zombies exhaust maxproc on large orgs
                 break
             line = line.decode('utf-8')
             file_path = line.split(":")[0]
@@ -183,7 +186,7 @@ def npm_install_files(path, username):
                 }) + '\n')
 
 def pip_install_files(path, username):
-    command = f"rg --hidden -g '!.git' -g '!**/node_modules/**' -e 'pip install|pip3 install|poetry install|poetry add|pipx install|uv add|uv pip install|uvx |uv tool install' --no-heading -g '!*/node_modules' -n {path}"
+    command = f"rg --hidden -g '!.git' -g '!**/node_modules/**' -g '!**/spec/**' -g '!**/test/**' -g '!**/tests/**' -g '!**/fixtures/**' -g '!**/testdata/**' -g '!**/test-fixtures/**' -g '!**/__tests__/**' -e 'pip install|pip3 install|poetry install|poetry add|pipx install|uv add|uv pip install|uvx |uv tool install' --no-heading -g '!*/node_modules' -n {path}"
     output_path = OUTPUT_ROOT / username
     output_file = f"{output_path}/pip_search.json"
     if not pathlib.Path(output_file).exists():
@@ -194,6 +197,7 @@ def pip_install_files(path, username):
         while True:
             line = process.stdout.readline()
             if line == b'':
+                process.wait()  # reap rg; zombies exhaust maxproc on large orgs
                 break
             line = line.decode('utf-8')
             file_path = line.split(":")[0]
@@ -206,7 +210,11 @@ def pip_install_files(path, username):
             }) + '\n')
 
 def gem_install_files(path, username):
-    command = f'rg --hidden -g "!.git" -g "!**/node_modules/**" "gem i |gem \'|gem install|gem \\\"" --no-heading -g "!*/node_modules" -n {path}'
+    command = (f'rg --hidden -g "!.git" -g "!**/node_modules/**" '
+             f'-g "!**/spec/**" -g "!**/test/**" -g "!**/tests/**" '
+             f'-g "!**/fixtures/**" -g "!**/testdata/**" -g "!**/test-fixtures/**" '
+             f'-g "!**/__tests__/**" "gem i |gem \'|gem install|gem \\\"" --no-heading '
+             f'-g "!*/node_modules" -n {path}')
     output_path = OUTPUT_ROOT / username
     output_file = f"{output_path}/gem_search.json"
     if not pathlib.Path(output_file).exists():
@@ -223,6 +231,7 @@ def gem_install_files(path, username):
         while True:
             line = process.stdout.readline()
             if line == b'':
+                process.wait()  # reap rg; zombies exhaust maxproc on large orgs
                 break
             line = line.decode('utf-8')
             file_path = line.split(":")[0]
@@ -269,6 +278,7 @@ def find_urls(path, username):
             line = process.stdout.readline()
 
             if line == b'':
+                process.wait()  # reap rg; zombies exhaust maxproc on large orgs
                 break
 
             line = line.decode('utf-8')
@@ -289,7 +299,7 @@ def find_urls(path, username):
 def npm_install_files(path, username):
     # npx/bunx/pnpm dlx/yarn dlx execute packages straight off the registry;
     # they appear in READMEs and agent configs alike.
-    command = f"rg --hidden -g '!.git' -g '!**/node_modules/**' -e 'yarn add|yarn dlx|npm install|npm i |npm ci|pnpm install|pnpm add|pnpm dlx|npx |bun add|bunx ' -g '!*yarn-error.log' --no-heading -g '!*/node_modules' -n {path}"
+    command = f"rg --hidden -g '!.git' -g '!**/node_modules/**' -g '!**/spec/**' -g '!**/test/**' -g '!**/tests/**' -g '!**/fixtures/**' -g '!**/testdata/**' -g '!**/test-fixtures/**' -g '!**/__tests__/**' -e 'yarn add|yarn dlx|npm install|npm i |npm ci|pnpm install|pnpm add|pnpm dlx|npx |bun add|bunx ' -g '!*yarn-error.log' --no-heading -g '!*/node_modules' -n {path}"
     output_path = OUTPUT_ROOT / username
     output_file = f"{output_path}/npm_search.json"
     if not pathlib.Path(output_file).exists():
@@ -302,6 +312,7 @@ def npm_install_files(path, username):
         while True:
             line = process.stdout.readline()
             if line == b'':
+                process.wait()  # reap rg; zombies exhaust maxproc on large orgs
                 break
             line = line.decode('utf-8')
             file_path = line.split(":")[0]
@@ -315,7 +326,7 @@ def npm_install_files(path, username):
                 }) + '\n')
 
 def pip_install_files(path, username):
-    command = f"rg --hidden -g '!.git' -g '!**/node_modules/**' -e 'pip install|pip3 install|poetry install|poetry add|pipx install|uv add|uv pip install|uvx |uv tool install' --no-heading -g '!*/node_modules' -n {path}"
+    command = f"rg --hidden -g '!.git' -g '!**/node_modules/**' -g '!**/spec/**' -g '!**/test/**' -g '!**/tests/**' -g '!**/fixtures/**' -g '!**/testdata/**' -g '!**/test-fixtures/**' -g '!**/__tests__/**' -e 'pip install|pip3 install|poetry install|poetry add|pipx install|uv add|uv pip install|uvx |uv tool install' --no-heading -g '!*/node_modules' -n {path}"
     output_path = OUTPUT_ROOT / username
     output_file = f"{output_path}/pip_search.json"
     if not pathlib.Path(output_file).exists():
@@ -326,6 +337,7 @@ def pip_install_files(path, username):
         while True:
             line = process.stdout.readline()
             if line == b'':
+                process.wait()  # reap rg; zombies exhaust maxproc on large orgs
                 break
             line = line.decode('utf-8')
             file_path = line.split(":")[0]
@@ -338,7 +350,11 @@ def pip_install_files(path, username):
             }) + '\n')
 
 def gem_install_files(path, username):
-    command = f'rg --hidden -g "!.git" -g "!**/node_modules/**" "gem i |gem \'|gem install|gem \\\"" --no-heading -g "!*/node_modules" -n {path}'
+    command = (f'rg --hidden -g "!.git" -g "!**/node_modules/**" '
+             f'-g "!**/spec/**" -g "!**/test/**" -g "!**/tests/**" '
+             f'-g "!**/fixtures/**" -g "!**/testdata/**" -g "!**/test-fixtures/**" '
+             f'-g "!**/__tests__/**" "gem i |gem \'|gem install|gem \\\"" --no-heading '
+             f'-g "!*/node_modules" -n {path}')
     output_path = OUTPUT_ROOT / username
     output_file = f"{output_path}/gem_search.json"
     if not pathlib.Path(output_file).exists():
@@ -355,6 +371,7 @@ def gem_install_files(path, username):
         while True:
             line = process.stdout.readline()
             if line == b'':
+                process.wait()  # reap rg; zombies exhaust maxproc on large orgs
                 break
             line = line.decode('utf-8')
             file_path = line.split(":")[0]
@@ -445,6 +462,10 @@ def _extract_runner_packages(base: str, args) -> list:
     i = 0
     while i < len(str_args):
         arg = str_args[i]
+        if arg.startswith('--package='):
+            flag_values.append(arg[len('--package='):])
+            i += 1
+            continue
         if arg in PACKAGE_FLAGS and i + 1 < len(str_args):
             flag_values.append(str_args[i + 1])
             i += 2
@@ -612,10 +633,17 @@ async def url_findings(copy_dir, concurrency: int = 25) -> list:
         by_host.setdefault(item["match"], []).append(item)
 
     semaphore = asyncio.Semaphore(concurrency)
+    total = len(by_host)
+    print(f"[*] Dead-domain check: resolving {total} unique hostname(s)...")
+    progress = {"done": 0}
 
     async def check(host):
         async with semaphore:
-            return host, await _resolve(host)
+            result = host, await _resolve(host)
+            progress["done"] += 1
+            if total > 25 and progress["done"] % 50 == 0:
+                print(f"[*]   dead-domain progress: {progress['done']}/{total}")
+            return result
 
     results = await asyncio.gather(*[check(host) for host in by_host])
 
@@ -652,23 +680,27 @@ async def mcp_url_findings(copy_dir) -> list:
     for item in items:
         by_url.setdefault(item["match"], []).append(item)
 
-    findings = []
-    for url, refs in by_url.items():
+    if by_url:
+        print(f"[*] MCP endpoint check: {len(by_url)} unique url(s)...")
+
+    async def classify(item):
+        url, refs = item
         # takeover-only: the endpoint's domain must be claimable; plaintext
         # HTTP and other hygiene issues are not takeover findings
         host = urlparse(url).hostname or ""
         if not (host and "." in host and not host.endswith(".local")
                 and host not in ("localhost", "127.0.0.1") and not host.startswith("127.")):
-            continue
+            return None
         if await _resolve(host):
-            continue
+            return None
         registered = await registry.domain_registered(_registrable_apex(host))
         if registered is True:
-            continue  # registered but dead DNS: not claimable
+            return None  # registered but dead DNS: not claimable
         reason = "unregistered-domain" if registered is False else "unresolvable-domain"
-        findings.append([{"url": url, "reason": reason}] + [[ref] for ref in refs])
+        return [{"url": url, "reason": reason}] + [[ref] for ref in refs]
 
-    return findings
+    classified = await asyncio.gather(*[classify(item) for item in by_url.items()])
+    return [finding for finding in classified if finding]
 
 
 def read_matches(path):
@@ -735,6 +767,7 @@ async def package_json_results(path, value):
     while True:
         line = await process.stdout.readline()
         if line == b'':
+            await process.wait()  # reap rg
             break
         line = line.decode('utf-8')
         file_path = line.split(":")[0]
@@ -755,6 +788,7 @@ async def dependency_file_results(path, value, *rg_glob_args):
     while True:
         line = await process.stdout.readline()
         if line == b'':
+            await process.wait()  # reap rg
             break
         line = line.decode('utf-8')
         file_path = line.split(":")[0]

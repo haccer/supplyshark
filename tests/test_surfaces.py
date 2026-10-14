@@ -1,3 +1,4 @@
+from conftest import REPO
 """File classification into attack surfaces."""
 from shark.surfaces import classify, classify_finding_file, package_surface
 
@@ -33,9 +34,9 @@ def test_plain_files_are_none():
 
 
 def test_finding_file_values_strip_user_repo():
-    assert classify_finding_file("testuser/tests/CLAUDE.md") == "agent"
-    assert classify_finding_file("testuser/tests/.github/workflows/ci.yml") == "ci"
-    assert classify_finding_file("testuser/tests/README.md") is None
+    assert classify_finding_file(f"testuser/{REPO}/CLAUDE.md") == "agent"
+    assert classify_finding_file(f"testuser/{REPO}/.github/workflows/ci.yml") == "ci"
+    assert classify_finding_file(f"testuser/{REPO}/README.md") is None
 
 
 def test_package_surface_priority():

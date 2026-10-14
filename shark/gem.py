@@ -1,4 +1,4 @@
-from . import registry, search, clean
+from . import clean, registry, search, validate
 from collections import defaultdict
 from pathlib import Path
 from urllib.parse import quote
@@ -31,6 +31,10 @@ async def gem_missing(gem: str) -> bool:
     return True
 
 async def scan_gems(path, gem):
+    # junk/empty names die before any registry request (the empty-gem bug
+    # class once produced findings citing every file in an account)
+    if not gem or not validate.valid_package('gem', gem):
+        return []
     if not await gem_missing(gem):
         return []
 

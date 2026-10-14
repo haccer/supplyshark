@@ -1,3 +1,4 @@
+from conftest import REPO
 """npm candidate extraction and availability checks."""
 from urllib.parse import unquote
 
@@ -13,6 +14,7 @@ async def test_find_package_json_excludes_shorthand_and_git_refs(work_tree):
     assert sorted(packages) == [
         "@asldkjsupplyshark4/test",
         "@json-rpc-tools/utils",
+        "agentfake-dep-pkg",
         "angular",
         "angular-mocks",
         "babel-core",
@@ -105,7 +107,7 @@ async def test_scope_check_available_covers_all_packages(work_tree, monkeypatch)
     assert "unverified" not in results[0]
     # refs cite where the scope's packages are used
     files = {ref[0]["file"] for ref in results[1:]}
-    assert "testuser/tests/aREADME.md" in files
+    assert f"testuser/{REPO}/aREADME.md" in files
 
 
 async def test_scope_check_unknown_marks_unverified(work_tree, monkeypatch):

@@ -1,9 +1,10 @@
-from . import registry, search, clean
+from . import clean, registry, search, validate
 from collections import defaultdict
 from pathlib import Path
 from urllib.parse import quote
 import json
 import random
+import re
 import aiofiles
 import asyncio
 
@@ -66,7 +67,50 @@ async def package_missing(package: str) -> bool:
             return False
     return True
 
+def _repo_dep_sections(copy_dir: str) -> dict:
+    """{repo: {dependency name: 'dep' | 'dev'}} across each repo's copied
+    package.json files. Two uses: npx bin-shadow detection (is the name a
+    locally declared dependency at all) and exec-path tagging (runtime
+    dependencies are imported by the victim's code; devDependencies mostly
+    execute via tooling that loads them by name)."""
+    from pathlib import Path as _Path
+    sections = {}
+    for file in _Path(copy_dir).rglob('package.json'):
+        try:
+            data = json.loads(file.read_text(errors='ignore'))
+        except Exception:
+            continue
+        repo = '/'.join(file.relative_to(_Path(copy_dir)).parts[:1])
+        per = sections.setdefault(repo, {})
+        for key, level in (('dependencies', 'dep'), ('peerDependencies', 'dep'),
+                           ('devDependencies', 'dev'), ('optionalDependencies', 'dev')):
+            for name in (data.get(key) or {}):
+                per.setdefault(name, level)
+    return sections
+
+
+def _scope_registry_pins(copy_dir: str) -> dict:
+    """{repo: {scope(without @): registry_url}} from copied .npmrc files.
+    A scope pinned to a non-npmjs registry (GitHub Packages, Artifactory)
+    can never be claimed by publishing to the public registry."""
+    from pathlib import Path as _Path
+    pins = {}
+    for file in _Path(copy_dir).rglob('.npmrc'):
+        repo = '/'.join(file.relative_to(_Path(copy_dir)).parts[:1])
+        for line in file.read_text(errors='ignore').splitlines():
+            line = line.strip()
+            m = re.match(r'@([\w.-]+):registry\s*=\s*(\S+)', line)
+            if m:
+                url = m.group(2)
+                if 'registry.npmjs.org' not in url:
+                    pins.setdefault(repo, {})[m.group(1).lower()] = url
+    return pins
+
+
 async def scan_packages(path, package):
+    # junk names die before any registry request
+    if not validate.valid_package('npm', package):
+        return []
     if not await package_missing(package):
         return []
 
@@ -74,9 +118,47 @@ async def scan_packages(path, package):
     data = await search.package_json_results(path, package)
     results.extend(json.loads(data))
     search_data = await search.package_search_json_results(f"{path}/npm_search.json", package)
-    results.extend(search_data)
 
-    if results == [{"package": package}]:
+    pinned = _scope_registry_pins(path)
+    dep_sections = _repo_dep_sections(path)
+    scope = package.split('/')[0][1:].lower() if package.startswith('@') else None
+
+    def _ref_repo(entry):
+        return entry[0].get('file', '').split('/')[1] if entry and entry[0].get('file', '').count('/') >= 2 else None
+
+    kept_stream_refs = []
+    for entry in search_data:
+        match = entry[0].get('match', '')
+        runner = match.split()[0] if match.split() else ''
+        repo = _ref_repo(entry)
+        # scope pinned to a private registry: public takeover impossible
+        if scope and pinned.get(repo, {}).get(scope):
+            continue
+        # npx/bunx of a bin provided by a locally declared dependency:
+        # the registry is never consulted
+        if runner in ('npx', 'bunx'):
+            deps = dep_sections.get(repo, {})
+            if package in deps or any(d.endswith('/' + package) for d in deps):
+                continue
+        kept_stream_refs.append(entry)
+    results.extend(kept_stream_refs)
+
+    # exec-path tag: which execution path survives npm >=11's install-script
+    # gating. runner (npx/bunx fetch-and-execute) and dep (the victim's code
+    # imports it -> module body runs at import time) are client-version
+    # independent; dev runs via tooling that loads declared plugins by name.
+    exec_path = None
+    if any((e[0].get('match', '').split() or [''])[0] in ('npx', 'bunx')
+           for e in kept_stream_refs):
+        exec_path = 'runner'
+    else:
+        levels = {lvl for per in dep_sections.values()
+                  for n, lvl in per.items() if n == package}
+        exec_path = 'dep' if 'dep' in levels else ('dev' if 'dev' in levels else None)
+    if exec_path:
+        results[0]['exec'] = exec_path
+
+    if results == [{"package": package}] or results == [{"package": package, "exec": exec_path}]:
         results = []
 
     return results
@@ -154,6 +236,11 @@ async def scope_check(path, scope, packages):
     claimable (skip them all); if available, one finding covers every
     package under it; unknown reports a single unverified finding."""
     name = scope.split('@')[1].split('/')[0]
+    if not validate.valid_scope_name(name):
+        return []
+    packages = [p for p in packages if validate.valid_package('npm', p)]
+    if not packages:
+        return []
     verdict = await scope_status(name, probe_packages=packages)
     if verdict == "taken":
         return []

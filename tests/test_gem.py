@@ -1,3 +1,4 @@
+from conftest import REPO
 """RubyGems availability checks."""
 from shark import gem, search
 
@@ -16,4 +17,4 @@ async def test_scan_gems_reports_gemfile_refs(work_tree, fake_registry):
     results = await gem.scan_gems(str(output_root / "testuser"), "freegemsupplyshark")
     assert results and results[0] == {"package": "freegemsupplyshark"}
     files = {item[0]["file"] for item in results[1:]}
-    assert files == {"testuser/tests/Gemfile"}
+    assert files == {f"testuser/{REPO}/Gemfile"}

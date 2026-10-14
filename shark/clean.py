@@ -1,5 +1,7 @@
 import re
 
+from . import validate
+
 def check(result):
     if len(result.split()) > 1:
         return False
@@ -10,17 +12,38 @@ def check(result):
 # followed by extra arguments, so the single-token rule does not apply
 RUNNERS = {'npx', 'bunx', 'uvx', 'dlx'}
 
+def _runner_package(rest: str) -> str:
+    """The registry package a runner line installs: an explicit
+    --package=/-p/--with/--from value wins (the bare positional is then a
+    bin inside that package, not a fetchable name); otherwise the first
+    non-flag token."""
+    tokens = validate.strip_template_vars(rest).split()
+    for i, tok in enumerate(tokens):
+        if tok.startswith('--package='):
+            return tok[len('--package='):]
+        if tok in ('-p', '--package', '--with', '--from') and i + 1 < len(tokens):
+            return tokens[i + 1]
+    for tok in tokens:
+        if not tok.startswith('-'):
+            return tok
+    return ''
+
 def search(lines):
     matches = []
     pattern = re.compile(r'(install|add|ci|i|npx|bunx|uvx|dlx)(?: -(?:y|g|D|E|U|s|q)| --(?:save-dev|save-optional|save-exact|save-prod|save|dev|global|upgrade|yes|silent|quiet))? (.+)')
     for line in lines:
+        line = validate.strip_template_vars(line)
         match = pattern.search(line)
         if not match:
             continue
         if match.group(1) in RUNNERS:
-            matches += [package(match.group(2).split()[0])]
+            name = package(_runner_package(match.group(2)))
         elif check(match.group(2)):
-            matches += [package(match.group(2))]
+            name = package(match.group(2))
+        else:
+            continue
+        if not validate.is_junk_name(name):
+            matches += [name]
     return matches
 
 def gem_search(gemlist):
@@ -38,9 +61,14 @@ def gem_search(gemlist):
     pattern = re.compile(r"gem (i |install |\'|\")(.*)")
     for gem in gemlist:
         if not any(badline in gem for badline in badlines):
-            match = pattern.search(gem)
+            match = pattern.search(validate.strip_template_vars(gem))
             if match:
-                matches += [package_gem(match.group(2))]
+                name = package_gem(match.group(2))
+                # quoted-form matches yield '' (a bug class that once made
+                # an empty name match every line of every repo); junk names
+                # die here, before any registry lookup
+                if name and not validate.is_junk_name(name):
+                    matches += [name]
     return matches
 
 def package(line):

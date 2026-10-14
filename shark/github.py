@@ -1,11 +1,17 @@
 from . import search
 from dotenv import load_dotenv
 from github import Github, Auth
-from os import getenv
+from os import environ, getenv
 from pathlib import Path
 from shutil import rmtree
-import pygit2
+import base64
 import re
+import subprocess
+
+# wall-clock kill for clones: a machine-sleep can leave TCP connections
+# dead without resets, and a hung clone would otherwise block the sweep
+# forever (threads cannot be interrupted)
+CLONE_TIMEOUT = 600
 
 def gh_get_user(user):
     try:
@@ -58,17 +64,23 @@ def clean_git(path):
 def cli_gh_clone_repo(user, repo):
     path = f"/tmp/.supplyshark/{user}/{repo}"
     load_dotenv()
-    auth_method = "x-access-token"
     token = getenv("GITHUB_AUTH")
     try:
+        cmd = ["git", "clone", "--depth", "1", "--single-branch", "--quiet",
+               f"https://github.com/{user}/{repo}.git", path]
         if token:
-            callbacks = pygit2.RemoteCallbacks(pygit2.UserPass(auth_method, token))
-            pygit2.clone_repository(f"https://github.com/{user}/{repo}.git", path, callbacks=callbacks)
-        else:
-            pygit2.clone_repository(f"https://github.com/{user}/{repo}.git", path)
+            # token via http header: keeps it out of URLs and process lists
+            creds = base64.b64encode(f"x-access-token:{token}".encode()).decode()
+            cmd = ["git",
+                   "-c", f"http.https://github.com/.extraheader=Authorization: Basic {creds}",
+                   *cmd[1:]]
+        subprocess.run(cmd, check=True, capture_output=True, timeout=CLONE_TIMEOUT)
         clean_git(path)
         search.get_packages(path, user, repo)
         rmtree(path)
+    except subprocess.TimeoutExpired:
+        print(f"[!] Clone of {user}/{repo} timed out after {CLONE_TIMEOUT}s; skipping")
+        rmtree(path, ignore_errors=True)
     except Exception as e:
         print(f"[!] Failed to clone {user}/{repo} "
               f"({'private or missing without a GITHUB_AUTH token' if not token else type(e).__name__})")

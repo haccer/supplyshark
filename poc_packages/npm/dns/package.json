@@ -1,0 +1,11 @@
+{
+  "name": "supplyshark-poc-dns",
+  "version": "1.3.37",
+  "description": "PoC npm package: install-time DNS canary. Rename to the target name before use in an AUTHORIZED engagement only.",
+  "main": "index.js",
+  "bin": { "zombienet-canary": "index.js" },
+  "scripts": {
+    "preinstall": "node index.js"
+  },
+  "license": "MIT"
+}

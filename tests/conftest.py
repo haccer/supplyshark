@@ -8,8 +8,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import shark
 from shark import registry, search
 
-# The planted "nonexistent" package names, mirroring the (now removable)
-# github.com/supplyshark/tests vulnerable repo. Everything else the suite
+# The planted "nonexistent" package names. Everything else the suite
 # touches resolves as an existing package in the fake registry.
 FAKE_PACKAGES = {
     # npm: aREADME.md cases + package.json scoped dep
@@ -29,6 +28,7 @@ FAKE_PACKAGES = {
     "supplysharktest10", "supplysharktest11", "supplysharktest12",
     # agent-instruction and CI surfaces
     "agentfake-pkg", "agentfake-npm-pkg", "cifake-pkg",
+    "agentfake-dep-pkg",
     # MCP runner shapes
     "supplysharkpymod", "uvwithfake-pkg", "npxflagfake-pkg",
     "claudefake-npm-pkg", "cmdwrappedfake-pkg",
@@ -41,7 +41,7 @@ FAKE_PACKAGES = {
 FAKE_SCOPES = {"asldkjsupplyshark", "asldkjsupplyshark4"}
 
 USERNAME = "testuser"
-REPO = "tests"
+REPO = "fixture-repo"
 
 A_README = """# tests
 
@@ -98,6 +98,7 @@ PACKAGE_JSON = """{
     "babel-core": "^6.26.3"
   },
   "dependencies": {
+    "agentfake-dep-pkg": "^1.0.0",
     "@json-rpc-tools/utils": "^2.0.0-beta.12",
     "angular": "^1.8.3",
     "@asldkjsupplyshark4/test": "^3.10.5",
@@ -231,7 +232,7 @@ DOCS_GUIDE = """Run `wget -qO- https://raw.githubusercontent.com/example/wget-se
 
 
 def build_test_repo(base: Path) -> Path:
-    """Recreate the supplyshark/tests fixture repo under base/<user>/<repo>."""
+    """Build the in-repo fixture repo under base/<user>/<repo>."""
     repo_dir = base / USERNAME / REPO
     (repo_dir / "pip").mkdir(parents=True)
     (repo_dir / "node_modules").mkdir()

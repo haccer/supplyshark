@@ -1,4 +1,4 @@
-from . import clean, registry, search
+from . import clean, registry, search, validate
 from collections import defaultdict
 from pathlib import Path
 import aiofiles
@@ -8,6 +8,37 @@ import re
 
 # PEP 508 name: starts and ends alphanumeric, middle allows . _ -
 REQ_NAME = re.compile(r'^[A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9])?')
+
+# prose masquerading as a requirements file (design docs, RSpec code, HTML
+# sources) once produced dozens of word-salad findings; a file is skipped
+# when it has enough lines to judge AND almost none look like requirements
+# AND most first tokens are common English words. Calibrated so bare-name
+# requirement files (no version pins) always survive.
+REQ_ISH = re.compile(r'[=<>!~@]|\[[\w.,-]+\]')
+COMMON_WORDS = {
+    'or', 'in', 'and', 'the', 'a', 'an', 'to', 'of', 'for', 'is', 'are',
+    'be', 'with', 'that', 'this', 'it', 'on', 'as', 'at', 'by', 'from',
+    'not', 'if', 'then', 'else', 'end', 'do', 'does', 'has', 'have', 'will',
+    'would', 'can', 'could', 'should', 'may', 'might', 'must', 'was',
+    'were', 'we', 'you', 'they', 'all', 'any', 'some', 'but', 'so', 'than',
+    'when', 'where', 'how', 'what', 'which', 'who', 'why', 'while', 'each',
+    'few', 'more', 'most', 'other', 'same', 'now', 'describe', 'context',
+    'expect', 'let', 'require', 'puts', 'true', 'false', 'nil', 'gem',
+    'install', 'run', 'test', 'tests', 'file', 'files', 'use', 'using',
+    'used', 'new', 'see', 'note', 'example', 'helps', 'via', 'into',
+    'about', 'them', 'these', 'those', 'one', 'two', 'per',
+}
+
+def _looks_like_requirements(text: str) -> bool:
+    lines = [l.strip() for l in text.splitlines()
+             if l.strip() and not l.strip().startswith('#') and not l.strip().startswith('-')]
+    if len(lines) < 6:
+        return True
+    ish = sum(1 for l in lines if REQ_ISH.search(l)) / len(lines)
+    firsts = [l.split()[0].split('[')[0].split('=')[0].split(';')[0].rstrip(',:')
+              for l in lines if l.split()]
+    common = sum(1 for tok in firsts if tok.lower() in COMMON_WORDS or len(tok) <= 3) / len(firsts)
+    return not (ish < 0.25 and common > 0.5)
 
 
 def parse_requirement(line: str) -> str | None:
@@ -34,10 +65,13 @@ async def find_requirements_txt(directory: Path) -> list[str]:
 
     async def process_file(file_path: Path) -> None:
         async with aiofiles.open(file_path, 'r', errors='ignore') as f:
-            async for line in f:
-                name = parse_requirement(line)
-                if name:
-                    lines.append(name)
+            text = await f.read()
+        if not _looks_like_requirements(text):
+            return
+        for line in text.splitlines():
+            name = parse_requirement(line)
+            if name:
+                lines.append(name)
 
     directory = Path(directory).resolve()
     files = [file for file in directory.rglob('*.txt') if 'requirements' in file.name and file.is_file()]
@@ -59,6 +93,7 @@ def find_pyproject_toml(directory) -> list[str]:
         return []
 
     names = []
+    redirected = set()
 
     for file in Path(directory).resolve().rglob('pyproject.toml'):
         try:
@@ -79,6 +114,12 @@ def find_pyproject_toml(directory) -> list[str]:
                 if name:
                     names.append(name)
 
+        # [tool.uv.sources] redirects (git/path/url) mean the documented
+        # uv workflows never resolve these names from PyPI
+        uv_sources = ((data.get('tool') or {}).get('uv') or {}).get('sources') or {}
+        redirected.update(n for n, spec in uv_sources.items()
+                          if isinstance(spec, dict) and any(k in spec for k in ('git', 'path', 'url')))
+
         poetry_deps = ((data.get('tool') or {}).get('poetry') or {}).get('dependencies') or {}
         for name, spec in poetry_deps.items():
             if name == 'python':
@@ -89,7 +130,7 @@ def find_pyproject_toml(directory) -> list[str]:
             if parsed:
                 names.append(parsed)
 
-    return names
+    return [n for n in names if n not in redirected]
 
 
 def read_pip_search_json(path: str) -> list:
@@ -121,7 +162,10 @@ async def package_missing(package: str) -> bool:
 
 
 async def scan_packages(path, package):
-    if not package or not await package_missing(package):
+    # junk names die before any registry request
+    if not package or not validate.valid_package('pip', package):
+        return []
+    if not await package_missing(package):
         return []
 
     results = [{"package": package}]

@@ -168,3 +168,16 @@ cython_debug/
 
 # Local wordlists (kept out of the repo)
 lists/
+progress.txt
+
+# Security research / triage work products (findings, PoCs, reports) — never commit
+triage/
+scan.log
+*.poc-output.log
+
+# PoC package build artifacts (sources are committed, builds are not)
+poc_packages/**/dist/
+poc_packages/**/node_modules/
+poc_packages/**/*.egg-info/
+poc_packages/**/*.gem
+poc_packages/**/rce-proof.txt
